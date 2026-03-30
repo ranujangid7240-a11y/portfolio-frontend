@@ -1103,7 +1103,7 @@
     }
 
     // Dynamic Backend Fetching
-    const API_URL = 'http://localhost:3000/api';
+    const API_URL = 'http://portfolio-gallery-2z0w.onrender.com/api';
 
     async function fetchHomeData() {
       try {
@@ -1145,7 +1145,7 @@
 
           const renderMedia = (m, isCenter=false) => {
             if(m.placeholder) return `<div class="moment-media"><div class="media-shimmer"></div></div>`;
-            const fullUrl = m.url.startsWith('http') ? m.url : `http://localhost:3000${m.url}`;
+            const fullUrl = m.url.startsWith('http') ? m.url : `http://portfolio-gallery-2z0w.onrender.com${m.url}`;
             if(m.type === 'video') return `<video class="moment-media" src="${fullUrl}" autoplay muted loop playsinline></video>`;
             return `<img class="moment-media" src="${fullUrl}" style="object-fit:cover;">`;
           };
