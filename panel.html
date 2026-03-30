@@ -263,16 +263,17 @@
   </div>
 
   <script>
-    const API_URL = 'https://portfolio-gallery-2z0w.onrender.com/api';
+    const BASE_URL = "https://portfolio-gallery-2z0w.onrender.com";
+    const API_URL = `${BASE_URL}/api`;
     
-    // Auth Logic
     const loginForm = document.getElementById('loginForm');
     const loginSection = document.getElementById('loginSection');
     const dashboardSection = document.getElementById('dashboardSection');
 
     function checkAuth() {
       const token = localStorage.getItem('adminToken');
-      if (token) {
+      // "undefined" या "null" स्ट्रिंग को हैंडल करने के लिए चेक
+      if (token && token !== "undefined" && token !== "null") {
         loginSection.style.display = 'none';
         dashboardSection.style.display = 'block';
         fetchDashboard();
@@ -282,106 +283,74 @@
       }
     }
 
+    // 1. Auth: Login logic
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      const res = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      if (res.ok) {
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
+      const submitBtn = e.target.querySelector('button');
+      
+      submitBtn.innerText = "Authenticating... (Please wait)";
+      submitBtn.disabled = true;
+
+      try {
+        const res = await fetch(`${API_URL}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+
         const data = await res.json();
-        localStorage.setItem('adminToken', data.token);
-        checkAuth();
-      } else {
-        alert('Login failed');
+
+        if (res.ok) {
+          if (data.token) {
+            localStorage.setItem('adminToken', data.token);
+            checkAuth();
+          } else {
+            alert('Login failed: Token not received.');
+          }
+        } else {
+          alert(`Login failed: ${data.message || 'Invalid credentials'}`);
+        }
+      } catch (err) {
+        alert('Server is waking up (Render takes time) or network error. Please try again in 20 seconds.');
+      } finally {
+        submitBtn.innerText = "Access Panel";
+        submitBtn.disabled = false;
       }
     });
 
     document.getElementById('logoutBtn').addEventListener('click', () => {
-      localStorage.removeItem('adminToken');
-      checkAuth();
-    });
-
-    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const file = document.getElementById('mediaFile').files[0];
-      const description = document.getElementById('mediaDesc').value;
-      if (!file) return;
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('description', description);
-      
-      // Basic orientation check based on size (optional but helpful)
-      // For now, we'll let the user decide or default it in backend
-
-      try {
-        const res = await fetch(`${API_URL}/media`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-          },
-          body: formData
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          console.log('Saved Media:', data);
-          alert('Moment Captured and Uploaded to Cloudinary!');
-          document.getElementById('uploadForm').reset();
-          fetchDashboard(); // Refresh stats and list
-        } else {
-          const errData = await res.json();
-          alert(`Upload failed: ${errData.message || 'Unknown error'}`);
-        }
-      } catch (err) {
-        console.error('Upload Error:', err);
-        alert('Upload failed');
+      if(confirm('Logout?')) {
+        localStorage.removeItem('adminToken');
+        checkAuth();
       }
     });
 
-    // Submitting Thought
-    document.getElementById('thoughtForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const catSelect = document.getElementById('thoughtCategory').value;
-      const customCat = document.getElementById('customCategory').value;
-      const category = customCat || catSelect;
-      const content = document.getElementById('thoughtContent').value;
-      
-      const res = await fetch(`${API_URL}/thoughts`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        },
-        body: JSON.stringify({ category, content })
-      });
-
-      if (res.ok) {
-        alert('Thought added');
-        document.getElementById('thoughtForm').reset();
-        fetchDashboard();
-      }
-    });
-
+    // 2. Resource Management: Fetch items
     async function authFetch(url, options = {}) {
+      const token = localStorage.getItem('adminToken');
       const authOptions = {
         ...options,
         headers: {
           ...options.headers,
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+          'Authorization': `Bearer ${token}`
         }
       };
+
       const res = await fetch(url, authOptions);
       if (res.status === 401) {
         localStorage.removeItem('adminToken');
         checkAuth();
         throw new Error('Unauthorized');
       }
-      return res.json();
+      
+      // Handle non-JSON responses gracefully
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        return res.json();
+      }
+      return {};
     }
 
     async function fetchDashboard() {
@@ -391,64 +360,126 @@
         document.getElementById('statVideos').innerText = stats.videos || 0;
         document.getElementById('statThoughts').innerText = stats.thoughts || 0;
         
-        const mediaRes = await authFetch(`${API_URL}/media`);
-        const thoughtRes = await authFetch(`${API_URL}/thoughts`);
+        const [mRes, tRes] = await Promise.all([
+          authFetch(`${API_URL}/media`),
+          authFetch(`${API_URL}/thoughts`)
+        ]);
         
-        const mediaList = mediaRes.data || [];
-        const thoughtList = thoughtRes.data || [];
+        const mediaList = mRes.data || mRes || [];
+        const thoughtList = tRes.data || tRes || [];
         
-        const mHtml = mediaList.map(m => `<div class="list-item"><span>${m.filename} (${m.type}, ${m.orientation})</span> <button onclick="handleDeleteResource('media', '${m.id}')">Delete</button></div>`).join('');
-        document.getElementById('mediaList').innerHTML = mHtml;
+        document.getElementById('mediaList').innerHTML = mediaList.map(m => `
+          <div class="list-item">
+            <span>${m.filename || 'Resource'} (${m.type})</span> 
+            <button onclick="handleDeleteResource('media', '${m.id || m._id}')">Delete</button>
+          </div>
+        `).join('') || '<p style="padding:10px; opacity:0.5;">No moments yet.</p>';
 
-        const tHtml = thoughtList.map(t => `<div class="list-item"><span>[${t.category}] ${t.content.substring(0,30)}...</span> <button onclick="handleDeleteResource('thoughts', '${t.id}')">Delete</button></div>`).join('');
-        document.getElementById('thoughtList').innerHTML = tHtml;
-      } catch (err) {
-        console.error('Fetch error:', err);
-      }
+        document.getElementById('thoughtList').innerHTML = thoughtList.map(t => `
+          <div class="list-item">
+            <span>[${t.category}] ${t.content.substring(0,30)}...</span> 
+            <button onclick="handleDeleteResource('thoughts', '${t.id || t._id}')">Delete</button>
+          </div>
+        `).join('') || '<p style="padding:10px; opacity:0.5;">No thoughts yet.</p>';
+        
+      } catch (err) { console.error('Dashboard Fetch Err:', err); }
     }
 
-    window.handleDeleteResource = async (type, id) => {
-      console.log('Delete requested:', type, id);
-      if (!confirm('Are you sure you want to delete this fragment?')) return;
+    // 3. Upload: Moments (Images/Videos)
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const file = document.getElementById('mediaFile').files[0];
+      const description = document.getElementById('mediaDesc').value;
+      const submitBtn = e.target.querySelector('button');
+
+      if (!file) return alert('Select a file.');
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('description', description);
       
+      submitBtn.innerText = 'Capturing Moment...';
+      submitBtn.disabled = true;
+
+      try {
+        const res = await fetch(`${API_URL}/media`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('adminToken')}` },
+          body: formData
+        });
+
+        if (res.ok) {
+          alert('Captured successfully!');
+          document.getElementById('uploadForm').reset();
+          fetchDashboard(); 
+        } else {
+          const err = await res.json();
+          alert(`Upload failed: ${err.message}`);
+        }
+      } catch (err) { alert('Upload error.'); }
+      finally {
+        submitBtn.innerText = 'Capture Moment';
+        submitBtn.disabled = false;
+      }
+    });
+
+    // 4. Thoughts: Mind Fragments
+    document.getElementById('thoughtForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const catSelect = document.getElementById('thoughtCategory').value;
+      const customCat = document.getElementById('customCategory').value;
+      const category = customCat || catSelect;
+      const content = document.getElementById('thoughtContent').value;
+      const submitBtn = e.target.querySelector('button');
+      
+      submitBtn.innerText = 'Syncing...';
+      submitBtn.disabled = true;
+
+      try {
+        const res = await fetch(`${API_URL}/thoughts`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+          },
+          body: JSON.stringify({ category, content })
+        });
+
+        if (res.ok) {
+          alert('Added successfully!');
+          document.getElementById('thoughtForm').reset();
+          fetchDashboard();
+        }
+      } catch (e) { alert('Save error.'); }
+      finally {
+        submitBtn.innerText = 'Add Fragment';
+        submitBtn.disabled = false;
+      }
+    });
+
+    window.handleDeleteResource = async (type, id) => {
+      if (!confirm('Are you sure?')) return;
       try {
         const res = await fetch(`${API_URL}/${type}/${id}`, { 
           method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-          }
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('adminToken')}` }
         });
-        
-        if (res.ok) {
-          alert('Successfully deleted.');
-          fetchDashboard();
-        } else {
-          const err = await res.json();
-          alert(`Error: ${err.message || 'Could not delete.'}`);
-        }
-      } catch (err) {
-        console.error('Delete error:', err);
-        alert('An unexpected error occurred while deleting.');
-      }
+        if (res.ok) fetchDashboard();
+      } catch (err) { alert('Delete failed.'); }
     };
 
-    // Tabs functionality
+    // 5. Tabs
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         tab.classList.add('active');
-        document.getElementById(tab.dataset.target).classList.add('active');
+        const target = document.getElementById(tab.dataset.target);
+        if(target) target.classList.add('active');
       });
     });
 
-    // Global error handler for debugging
-    window.onerror = function(msg, url, line) {
-      alert("Debug Error: " + msg + "\nLine: " + line);
-      return false;
-    };
-
     checkAuth();
-  </script>
+</script>
 </body>
 </html>
